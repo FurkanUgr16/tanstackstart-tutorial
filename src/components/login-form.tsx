@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { loginSchema } from '@/schemas/auth'
+import { authClient } from '@/lib/auth-client'
 
 export function LoginForm({
   className,
@@ -33,7 +34,19 @@ export function LoginForm({
       onSubmit: loginSchema,
     },
     onSubmit: async ({ value }) => {
-      toast.success('Form submitted successfully')
+      await authClient.signIn.email({
+        email: value.email,
+        password: value.password,
+        callbackURL: '/dashboard',
+        fetchOptions: {
+          onSuccess: () => {
+            toast.success('Signed in successfully')
+          },
+          onError: ({ error }) => {
+            toast.error(error.message)
+          },
+        },
+      })
     },
   })
 

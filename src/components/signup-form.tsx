@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { signupSchema } from '@/schemas/auth'
+import { authClient } from '@/lib/auth-client'
 
 export function SignupForm({ ...props }: React.ComponentProps<typeof Card>) {
   const form = useForm({
@@ -30,7 +31,20 @@ export function SignupForm({ ...props }: React.ComponentProps<typeof Card>) {
       onSubmit: signupSchema,
     },
     onSubmit: async ({ value }) => {
-      toast.success('Form submitted successfully')
+      await authClient.signUp.email({
+        name: value.fullName,
+        email: value.email,
+        password: value.password,
+        callbackURL: '/dashboard',
+        fetchOptions: {
+          onSuccess: () => {
+            toast.success('Signed up successfully')
+          },
+          onError: ({ error }) => {
+            toast.error(error.message)
+          },
+        },
+      })
     },
   })
 
