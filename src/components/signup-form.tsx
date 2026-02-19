@@ -1,6 +1,7 @@
-import { Link } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import { useForm } from '@tanstack/react-form'
 import { toast } from 'sonner'
+import { useTransition } from 'react'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -21,6 +22,8 @@ import { signupSchema } from '@/schemas/auth'
 import { authClient } from '@/lib/auth-client'
 
 export function SignupForm({ ...props }: React.ComponentProps<typeof Card>) {
+  const navigate = useNavigate()
+  const [isPending, startTransition] = useTransition()
   const form = useForm({
     defaultValues: {
       fullName: '',
@@ -30,20 +33,22 @@ export function SignupForm({ ...props }: React.ComponentProps<typeof Card>) {
     validators: {
       onSubmit: signupSchema,
     },
-    onSubmit: async ({ value }) => {
-      await authClient.signUp.email({
-        name: value.fullName,
-        email: value.email,
-        password: value.password,
-        callbackURL: '/dashboard',
-        fetchOptions: {
-          onSuccess: () => {
-            toast.success('Signed up successfully')
+    onSubmit: ({ value }) => {
+      startTransition(async () => {
+        await authClient.signUp.email({
+          name: value.fullName,
+          email: value.email,
+          password: value.password,
+          fetchOptions: {
+            onSuccess: () => {
+              navigate({ to: '/dashboard' })
+              toast.success('Signed up successfully')
+            },
+            onError: ({ error }) => {
+              toast.error(error.message)
+            },
           },
-          onError: ({ error }) => {
-            toast.error(error.message)
-          },
-        },
+        })
       })
     },
   })
@@ -115,13 +120,7 @@ export function SignupForm({ ...props }: React.ComponentProps<typeof Card>) {
                 )
               }}
             />
-            {/* <Field>
-              <FieldLabel htmlFor="password">Password</FieldLabel>
-              <Input id="password" type="password" required />
-              <FieldDescription>
-                Must be at least 8 characters long.
-              </FieldDescription>
-            </Field> */}
+
             <form.Field
               name="password"
               children={(field) => {
@@ -150,7 +149,9 @@ export function SignupForm({ ...props }: React.ComponentProps<typeof Card>) {
 
             <FieldGroup>
               <Field>
-                <Button type="submit">Create Account</Button>
+                <Button disabled={isPending} type="submit">
+                  {isPending ? 'Loading...' : 'Create Account'}
+                </Button>
                 <FieldDescription className="px-6 text-center">
                   Already have an account? <Link to="/login">Sign in</Link>
                 </FieldDescription>
