@@ -4,6 +4,7 @@ import { useForm } from '@tanstack/react-form'
 import { useState, useTransition } from 'react'
 import { toast } from 'sonner'
 import type { SearchResultWeb } from '@mendable/firecrawl-js'
+import type { BulkScrapeProgress } from '@/data/items'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Card,
@@ -23,6 +24,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { bulkScrapeUrl, mapUrlFn, scrapeUrlFn } from '@/data/items'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Progress } from '@/components/ui/progress'
 
 export const Route = createFileRoute('/dashboard/import')({
   component: RouteComponent,
@@ -54,10 +56,33 @@ function RouteComponent() {
         return
       }
 
-      await bulkScrapeUrl({
-        data: { urls: Array.from(selectedUrls) },
+      setProgress({
+        completed: 0,
+        total: selectedUrls.size,
+        url: '',
+        status: 'success',
       })
-      toast.success(`Successfully imported ${selectedUrls.size}URLs`)
+
+      let successCount = 0
+      let failedCount = 0
+
+      for await (const update of await bulkScrapeUrl({
+        data: { urls: Array.from(selectedUrls) },
+      })) {
+        setProgress(update)
+        if (update.status === 'success') {
+          successCount++
+        } else {
+          failedCount++
+        }
+      }
+      setProgress(null)
+
+      if (failedCount > 0) {
+        toast.success(`Import ${successCount} Urls (${failedCount} failed)`)
+      } else {
+        toast.success(`Successfully import ${successCount}Urls`)
+      }
     })
   }
 
@@ -69,6 +94,7 @@ function RouteComponent() {
 
   const [isPending, startTransition] = useTransition()
   const [bulkPending, startBulkTransition] = useTransition()
+  const [progress, setProgress] = useState<BulkScrapeProgress | null>(null)
   const form = useForm({
     defaultValues: { url: '' },
     validators: {
@@ -309,6 +335,24 @@ function RouteComponent() {
                         </label>
                       ))}
                     </div>
+
+                    {progress && (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-muted-foreground">
+                            Importing: {progress.completed}/ {progress.total}
+                          </span>
+                          <span className="font-medium">
+                            {Math.round(progress.completed / progress.total) *
+                              100}
+                          </span>
+                        </div>
+                        <Progress
+                          value={(progress.completed / progress.total) * 100}
+                        />
+                      </div>
+                    )}
+
                     <Button
                       disabled={bulkPending}
                       onClick={handleBulkImport}
@@ -317,7 +361,9 @@ function RouteComponent() {
                       {bulkPending ? (
                         <>
                           <Loader2 className="size-4 animate-spin" />
-                          Importing...
+                          {progress
+                            ? `Importing ${progress.completed}/${progress.total}`
+                            : 'Starting...'}
                         </>
                       ) : (
                         `Import ${selectedUrls.size} URLs`

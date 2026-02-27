@@ -1,9 +1,18 @@
 import { createServerFn } from '@tanstack/react-start'
 import * as z from 'zod'
-import { bulkImportSchema, extractSchema, importSchema } from '../schemas/input'
+import { notFound } from '@tanstack/react-router'
+import { generateText } from 'ai'
+import {
+  bulkImportSchema,
+  extractSchema,
+  importSchema,
+  searchSchema,
+} from '../schemas/input'
+import type { SearchResultWeb } from '@mendable/firecrawl-js'
 import { firecrawl } from '@/lib/firecrawl'
 import { prisma } from '@/db'
 import { authFnMiddleware } from '@/middlewares/auth'
+import { openrouter } from '@/lib/openRouter'
 
 export const scrapeUrlFn = createServerFn({ method: 'POST' })
   .middleware([authFnMiddleware])
@@ -75,6 +84,13 @@ export const mapUrlFn = createServerFn({ method: 'POST' })
     return result.links
   })
 
+export type BulkScrapeProgress = {
+  completed: number
+  total: number
+  url: string
+  status: 'success' | 'failed'
+}
+
 export const bulkScrapeUrl = createServerFn({ method: 'POST' })
   .middleware([authFnMiddleware])
   .inputValidator(
@@ -82,7 +98,8 @@ export const bulkScrapeUrl = createServerFn({ method: 'POST' })
       urls: z.array(z.string().url()),
     }),
   )
-  .handler(async ({ data, context }) => {
+  .handler(async function* ({ data, context }) {
+    const total = data.urls.length
     // eslint-disable-next-line @typescript-eslint/prefer-for-of
     for (let i = 0; i < data.urls.length; i++) {
       const url = data.urls[i]
@@ -94,6 +111,8 @@ export const bulkScrapeUrl = createServerFn({ method: 'POST' })
           status: 'PENDING',
         },
       })
+
+      let status: BulkScrapeProgress['status'] = 'success'
 
       try {
         const result = await firecrawl.scrape(url, {
@@ -126,6 +145,7 @@ export const bulkScrapeUrl = createServerFn({ method: 'POST' })
           },
         })
       } catch (error) {
+        status = 'failed'
         await prisma.savedItem.update({
           where: { id: item.id },
           data: {
@@ -133,5 +153,104 @@ export const bulkScrapeUrl = createServerFn({ method: 'POST' })
           },
         })
       }
+
+      const progress: BulkScrapeProgress = {
+        completed: i + 1,
+        total: total,
+        url: url,
+        status: status,
+      }
+      yield progress
     }
+  })
+
+export const getItemsFn = createServerFn({ method: 'GET' })
+  .middleware([authFnMiddleware])
+  .handler(async ({ context }) => {
+    const items = await prisma.savedItem.findMany({
+      where: {
+        userId: context.session.userId,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    })
+    return items
+  })
+
+export const getItembyId = createServerFn({ method: 'GET' })
+  .middleware([authFnMiddleware])
+  .inputValidator(z.object({ id: z.string() }))
+  .handler(async ({ context, data }) => {
+    const item = await prisma.savedItem.findUnique({
+      where: {
+        userId: context.session.userId,
+        id: data.id,
+      },
+    })
+    if (!item) {
+      throw notFound()
+    }
+    return item
+  })
+
+export const saveSummarAndGenerateTagsFn = createServerFn({ method: 'POST' })
+  .middleware([authFnMiddleware])
+  .inputValidator(
+    z.object({
+      id: z.string(),
+      summary: z.string(),
+    }),
+  )
+  .handler(async ({ context, data }) => {
+    const existing = await prisma.savedItem.findUnique({
+      where: {
+        id: data.id,
+        userId: context.session.userId,
+      },
+    })
+
+    if (!existing) {
+      throw notFound()
+    }
+    const { text } = await generateText({
+      model: openrouter.chat('z-ai/glm-4.5-air:free'),
+      system: `You are a helpful assistant that extracts relevant tags from content summaries.
+      Extract 3-5 short relevant tags that categorize the content. Return ONLY a comma-seperated list of tags nothing else.
+      Example: technology, programming, web development javascript`,
+      prompt: `Extract tags from this summary: \n\n${data.summary}`,
+    })
+    const tags = text
+      .split(',')
+      .map((tag) => tag.trim().toLowerCase())
+      .filter((tag) => tag.length > 0)
+      .slice(0, 5)
+
+    const item = await prisma.savedItem.update({
+      where: {
+        userId: context.session.userId,
+        id: data.id,
+      },
+      data: {
+        summary: data.summary,
+        tags: tags,
+      },
+    })
+    return item
+  })
+
+export const searchWebFn = createServerFn({ method: 'POST' })
+  .middleware([authFnMiddleware])
+  .inputValidator(searchSchema)
+  .handler(async ({ data }) => {
+    const result = await firecrawl.search(data.query, {
+      limit: 15,
+      location: 'Turkey',
+      tbs: 'qdr:y',
+    })
+    return result.web?.map((item) => ({
+      url: (item as SearchResultWeb).url,
+      title: (item as SearchResultWeb).title,
+      description: (item as SearchResultWeb).description,
+    })) as Array<SearchResultWeb>
   })
